@@ -57,6 +57,7 @@ from src.models.tasks import get_task_with_name, Autoencode
 from src.models.neural_baselines import create_neural_model
 from src.models.models import CNNToTransformerEncoder
 from src.models.trainer import FluTrainer
+from src.models.models import LightningSAnD
 from src.SAnD.core.model import SAnD
 from src.utils import (get_logger, load_dotenv, render_network_plot, set_gpus_automatically, 
                         visualize_model)
@@ -483,71 +484,159 @@ def train_sand( task_config=None,
                 data_location=None,
                 no_eval_during_training=False,
                 auto_set_gpu=None,
-                **_):
+                use_huggingface=False,
+                backend="petastorm",
+                train_path=None,
+                eval_path=None,
+                test_path=None,
+                only_with_lab_results=False,
+                downsample_negative_frac=None,
+                reload_dataloaders = 0,
+                log_steps=50,
+                val_epochs=10,
+                model_config={},
+                dropout_rate=0.5,
+                train_mixin_batch_size=3,
+                train_mix_positives_back_in=False,
+                pl_seed=2494,
+                resume_model_from_ckpt=None,
+                **model_specific_kwargs):
     
-    if model_path:
-        raise NotImplementedError()
+    if auto_set_gpu:
+        set_gpus_automatically(auto_set_gpu)
+    
+    if pl_seed:
+        pl.seed_everything(pl_seed)
 
     logger.info(f"Training SAnD")
+    
     if task_config:
-        task_name = task_config["task_name"]
-        dataset_args = task_config["dataset_args"]
+        task_name = task_config.get("task_name")                #task_name = task_config["task_name"] 
+        dataset_args = task_config.get("dataset_args",{})           #dataset_args = task_config["dataset_args"]
+        task_args = task_config.get("task_args",{})                 #task_args = task_config["task_args"]
+    else:
+        task_name = None
+        task_args = None
 
     if not eval_frac is None:
         dataset_args["eval_frac"] = eval_frac
     dataset_args["return_dict"] = True
     dataset_args["data_location"] = data_location
 
-    task = get_task_with_name(task_name)(dataset_args=dataset_args, 
-                                         activity_level=activity_level,
-                                         look_for_cached_datareader=look_for_cached_datareader,
-                                         datareader_ray_obj_ref=datareader_ray_obj_ref)
+    
+    task = get_task_with_name(task_name)(**task_args,
+                                        downsample_negative_frac=downsample_negative_frac,
+                                        dataset_args=dataset_args,
+                                        activity_level=activity_level,
+                                        look_for_cached_datareader=look_for_cached_datareader,
+                                        only_with_lab_results = only_with_lab_results,
+                                        datareader_ray_obj_ref=datareader_ray_obj_ref,
+                                        backend=backend,
+                                        train_path=train_path,
+                                        eval_path=eval_path,
+                                        test_path=test_path)
     
     if sinu_position_encoding:
         dataset_args["add_absolute_embedding"] = True
 
+    if not use_huggingface:
+        pl_training_args = dict(
+            max_epochs=n_epochs,
+            check_val_every_n_epoch=val_epochs,
+            log_every_n_steps=log_steps
+        )
 
-    train_dataset = task.get_train_dataset()
-    infer_example = train_dataset[0]["inputs_embeds"]
-    n_timesteps, n_features = infer_example.shape
+        """
+        train_dataset = task.get_train_dataset()    #better to use task.data_shape
+        infer_example = train_dataset[0]["inputs_embeds"]
+        n_timesteps, n_features = infer_example.shape
+        """
+        n_timesteps, n_features = task.data_shape
+        model_kwargs = dict(input_features=n_features,
+                            n_timesteps=n_timesteps,
+                            num_attention_heads = num_attention_heads,
+                            num_hidden_layers = num_hidden_layers,
+                            num_labels=2,
+                            learning_rate =learning_rate,
+                            warmup_steps = warmup_steps,
+                            inital_batch_size=train_batch_size,
+                            dropout_rate=dropout_rate,
+                            train_mixin_batch_size = train_mixin_batch_size,
+                            train_mix_positives_back_in = train_mix_positives_back_in,
+                            d_model=128, #dimensionality of output sequence 
+                            factor=256, # Encoder output dimension
+                            **model_specific_kwargs)
+        if model_config:
+        #    model_kwargs.update(model_config)
+            raise NotImplementedError
+        
+        if model_path:
+            model = LightningSAnD.load_from_checkpoint(model_path, 
+                                                                strict=False,
+                                                               **model_specific_kwargs)
+            model.hparams.wandb_id = None
+            
+        elif resume_model_from_ckpt:
+            model = LightningSAnD.load_from_checkpoint(resume_model_from_ckpt, 
+                                                                strict=False,
+                                                                **model_specific_kwargs) 
+        else:
+            model = LightningSAnD(**model_kwargs)
 
-    model = SAnD(input_features=n_timesteps,
-                 seq_len = n_features,
-                 n_heads = num_attention_heads,
-                 factor=256,
-                 n_layers = num_hidden_layers,
-                 n_class=2,
-                 pos_class_weight=pos_class_weight,
-                 neg_class_weight=neg_class_weight)
-                 
+        run_pytorch_lightning(model = model, 
+                        task = task, 
+                        training_args=pl_training_args,
+                        no_wandb=False,
+                        notes=notes,
+                        backend=backend,
+                        reload_dataloaders = reload_dataloaders)
+    
+    else:   
+ 
+        train_dataset = task.get_train_dataset()
+        infer_example = train_dataset[0]["inputs_embeds"]
+        n_timesteps, n_features = infer_example.shape
+        if model_path:
+            model = load_model_from_huggingface_checkpoint(model_path)   
+        else:
+            model = SAnD(input_features=n_timesteps,
+                        seq_len = n_features,
+                        n_heads = num_attention_heads,
+                        factor=256,
+                        n_layers = num_hidden_layers,
+                        n_class=2,
+                        pos_class_weight=pos_class_weight,
+                        neg_class_weight=neg_class_weight)
 
-    training_args = TrainingArguments(
-        output_dir='./results',          # output directorz
-        num_train_epochs=n_epochs,              # total # of training epochs
-        per_device_train_batch_size=train_batch_size,  # batch size per device during training
-        per_device_eval_batch_size=eval_batch_size,   # batch size for evaluation
-        warmup_steps=warmup_steps,                # number of warmup steps for learning rate scheduler
-        weight_decay=weight_decay,
-        learning_rate=learning_rate,               # strength of weight decay
-        logging_dir='./logs',
-        logging_steps=10,
-        do_eval=not no_eval_during_training,
-        dataloader_num_workers=16,
-        dataloader_pin_memory=True,
-        prediction_loss_only=False,
-        evaluation_strategy="epoch",
-        report_to=["wandb"]            # directory for storing logs
-    )
+        if task.is_classification:
+            metrics = task.get_huggingface_metrics(threshold=classification_threshold)
+        else:
+            metrics=None
 
-    if task.is_classification:
-        metrics = task.get_huggingface_metrics(threshold=classification_threshold)
-    else:
-        metrics=None
-
-    run_huggingface(model=model, base_trainer=FluTrainer,
+        training_args = TrainingArguments(
+                        output_dir='./results',          # output directorz
+                        num_train_epochs=n_epochs,              # total # of training epochs
+                        per_device_train_batch_size=train_batch_size,  # batch size per device during training
+                        per_device_eval_batch_size=eval_batch_size,   # batch size for evaluation
+                        warmup_steps=warmup_steps,                # number of warmup steps for learning rate scheduler
+                        weight_decay=weight_decay,
+                        learning_rate=learning_rate,               # strength of weight decay
+                        logging_dir='./logs',
+                        logging_steps=10,
+                        do_eval=not no_eval_during_training,
+                        dataloader_num_workers=16,
+                        dataloader_pin_memory=True,
+                        prediction_loss_only=False,
+                        evaluation_strategy="epoch",
+                        report_to=["wandb"]            # directory for storing logs
+                        )                  
+        
+        run_huggingface(model=model, base_trainer=FluTrainer,
                    training_args=training_args,
                    metrics = metrics, task=task,
                    no_wandb=no_wandb, notes=notes)
+
+
 
 def train_bert(task_config=None,
                 task_name=None,
