@@ -428,7 +428,7 @@ def wilcoxon_holm(alpha=0.05, df_perf=None):
         # then the null hypothesis over the entire classifiers cannot be rejected
         print(friedman_p_value)
         print('the null hypothesis over the entire classifiers cannot be rejected')
-#         exit()
+        exit()
     # get the number of classifiers
     m = len(classifiers)
     # init array that contains the p-values calculated by the Wilcoxon signed rank test

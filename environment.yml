@@ -1,4 +1,4 @@
-name: seattleflustudy
+name: Homekit2020
 channels:
   - conda-forge
   - defaults
@@ -8,43 +8,34 @@ dependencies:
   - pip
   - click=7.1
   - Sphinx
-  - coverage=5.5
   - python-dotenv>=0.5.1
   - pyarrow=3.0.0
   - numpy=1.20
-  - transformers=4.11.3
-  - pandas=1.2
+  - pandas=1.4
   - scikit-learn=0.24
   - scipy=1.6.0
-  - dask=2021.02.0
-  - distributed=2021.02.0
   - pylint=2.7.2
-  - tensorflow-gpu
   - fastparquet
   - ipython
-  - graphviz
-  - pathlib2
-  - pytorch
   - torchvision
-  - torchaudio
+  - graphviz
+  - pytorch
   - cudatoolkit=10.2
   - jupyter
-  - plotly
-  - dask-ml
   - matplotlib
-  - pytorch-lightning=1.4.9
+  - pytorch-lightning[extra]=1.7.0
   - torchmetrics>=0.5
-  - tensorboardx
   - pyspark=3.1.2
+  - sktime
   - pip:
+    - einops
     - torchviz==0.0.2
     - pyyaml==5.4.1
-    - wandb
+    - wandb 
     - xgboost==1.4.2
     - tensorboard==2.6.0
-    - ray[default]
     - tabulate==0.8.9
     - petastorm==0.11.3
-    - methodtools==0.4.5
+    - jsonargparse[all]
 variables:
   USE_TORCH: 1

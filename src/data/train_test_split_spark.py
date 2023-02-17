@@ -2,7 +2,6 @@ import glob
 import os
 
 import click
-import dask
 
 import pandas as pd
 import numpy as np
@@ -19,14 +18,11 @@ from pyspark.ml import Pipeline
 from pyspark.ml.feature import StandardScaler, VectorAssembler
 from pyspark import SparkContext
 
-# from src.models.commands import validate_yaml_or_json
-# from src.data.utils import get_dask_df, write_pandas_to_parquet, load_processed_table, read_parquet_to_pandas
-
 # TODO Maybe want to support loading this from a file
 # although this hardcoded config works pretty well for
 # bdata's darkwing machine
 SPARK_CONFIG = [ 
-    ("spark.master","local[95]"),
+    ("spark.master","local[16]"),
     ("spark.ui.port","4050"),
     ("spark.executor.memory","750g"),
     ('spark.driver.memory',  '2000g'),
@@ -45,7 +41,7 @@ SPARK_CONFIG = [
 def main(in_path, out_path, split_date=None, end_date=None,
         test_frac = 0.5, eval_frac = None, activity_level="minute",
         timestamp_col = "timestamp"):
-    
+
         if not activity_level == "minute":
             raise NotImplementedError("This script only supports minute-level data")
         

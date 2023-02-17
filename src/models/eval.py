@@ -74,36 +74,21 @@ class TorchPrecisionRecallAUC(AUROC):
         return tm_auc(recalls,precisions)
 
 
-class TorchMetricAutoencode(MetricCollection):
-    def __init__(self, bootstrap_cis=False,
-                 n_boostrap_samples=1000,
-                 prefix=""):
-        """Dummy class because autoencode metrics
-           would take up too much memory since we'd
-           be storing the whole dataset twice"""
-        super().__init__([])
-
-    
-    def compute(self) -> Dict[str, Any]:
-        return {}
-    
-    def update(self, *args: Any, **kwargs: Any) -> None:
-        return
 
 
 class TorchMetricRegression(MetricCollection):
-    def __init__(self, bootstrap_cis=False,
-                 n_boostrap_samples=1000,
+    def __init__(self, bootstrap_samples=1000,
                  prefix=""):
         self.add_prefix = prefix
-        self.bootstrap_cis = bootstrap_cis
         metrics = {}
 
-        if bootstrap_cis:
+        self.bootstrap_samples = bootstrap_samples
+
+        if bootstrap_samples:
             cosine_sim = BootStrapper(CosineSimilarity(),
-                                    num_bootstraps=n_boostrap_samples)
+                                    num_bootstraps=bootstrap_samples)
             explained_variance = BootStrapper(ExplainedVariance(),
-                                  num_bootstraps=n_boostrap_samples)
+                                  num_bootstraps=bootstrap_samples)
         else:    
             cosine_sim = CosineSimilarity()
             explained_variance = ExplainedVariance()
@@ -148,19 +133,20 @@ class TorchMetricRegression(MetricCollection):
             return results
 
 class TorchMetricClassification(MetricCollection):
-    def __init__(self, bootstrap_cis=False,
-                 n_boostrap_samples=100,
+    def __init__(self, bootstrap_samples=200,
                  prefix=""):
         
         self.add_prefix = prefix
-        self.bootstrap_cis = bootstrap_cis
+        self.bootstrap_samples = bootstrap_samples
+
+
         metrics = {}
 
-        if bootstrap_cis:
-            roc_auc = BootStrapper(torchmetrics.AUROC(),
-                                   num_bootstraps=n_boostrap_samples)
-            pr_auc = BootStrapper(TorchPrecisionRecallAUC(),
-                                  num_bootstraps=n_boostrap_samples)
+        if bootstrap_samples:
+            roc_auc = BootStrapper(torchmetrics.AUROC(), quantile=torch.tensor([0.975, 0.025], device="cuda"),
+                                   num_bootstraps=bootstrap_samples)
+            pr_auc = BootStrapper(TorchPrecisionRecallAUC(), quantile=torch.tensor([0.975, 0.025], device="cuda"),
+                                  num_bootstraps=bootstrap_samples)
         else:    
             roc_auc = torchmetrics.AUROC()  
             pr_auc = TorchPrecisionRecallAUC()
@@ -175,19 +161,21 @@ class TorchMetricClassification(MetricCollection):
                              "roc_auc":(max,0)}
 
     def compute(self) -> Dict[str, Any]:
-        results = super().compute()
-        if self.bootstrap_cis:
+        results = {k: m.compute() for k, m in self.items(keep_base=True, copy_state=False)}
+        results = {self._set_name(k): v for k, v in results.items()}
 
-            roc_auc = results["roc_auc"]["mean"] 
-            roc_std = results["roc_auc"]["std"] 
-            results["roc_auc_ci_high"] = roc_auc + 2*roc_std
-            results["roc_auc_ci_low"] = roc_auc - 2*roc_std
+        if self.bootstrap_samples:
+
+            # roc_auc = results["roc_auc"]["mean"]
+            # roc_std = results["roc_auc"]["std"]
+            results["roc_auc_ci_high"] = results["roc_auc"]["quantile"][0]
+            results["roc_auc_ci_low"] = results["roc_auc"]["quantile"][1]
             results["roc_auc"] = results["roc_auc"]["mean"]
         
-            pr_auc = results["pr_auc"]["mean"] 
-            pr_std = results["pr_auc"]["std"] 
-            results["pr_auc_ci_high"] = pr_auc + 2*pr_std
-            results["pr_auc_ci_low"] = pr_auc - 2*pr_std
+            # pr_auc = results["pr_auc"]["mean"]
+            # pr_std = results["pr_auc"]["std"]
+            results["pr_auc_ci_high"] = results["pr_auc"]["quantile"][0]
+            results["pr_auc_ci_low"] = results["pr_auc"]["quantile"][1]
             results["pr_auc"] = results["pr_auc"]["mean"]
         
         for metric , (operator,old_value) in self.best_metrics.items():
@@ -205,6 +193,7 @@ class TorchMetricClassification(MetricCollection):
 
     def update(self, preds: torch.Tensor, target: torch.Tensor) -> None:  # type: ignore
         probs = torch.nn.functional.softmax(preds,dim=1)[:,-1]
+
         return super().update(probs, target)
 
 def make_ci_bootsrapper(estimator):
@@ -226,9 +215,6 @@ def add_prefix(results,prefix):
     for k,v in results.items():
         renamed[prefix+k] = v
     return renamed
-
-def get_wandb_plots(): #TODO
-    ...
 
 def classification_eval(preds, labels, threshold = None, prefix=None,
                         bootstrap_cis=False):

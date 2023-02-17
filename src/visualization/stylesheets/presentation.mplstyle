@@ -5,5 +5,3 @@ lines.markersize : 10
 legend.fontsize: 18
 xtick.labelsize : 16
 ytick.labelsize : 16
-font.serif : Computer Modern
-font.family : serif
